@@ -1,0 +1,632 @@
+---
+title: 'Hacker News: Sentiment Analysis'
+author: "Ty Dunn"
+date: "February 16, 2017"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Querying the data
+
+### Getting Started
+
+Below I have included packages that you might need to be installed in order to run this project.
+```{r}
+# install.packages("bigrquery", repos="http://cran.rstudio.com/") # Google BigQuery
+# install.packages("googleAuthR") # Google API Client Library for R
+# install.packages("ggplot2") # Graphing package 
+# install.packages("stringr") # Consistent Wrappers for Common String Operations
+# install.packages("lubridate") # Converts continuous dates into discrete years
+```
+
+Below are the libraries needed to run this project.
+```{r}
+library(bigrquery) # Google BigQuery
+library(googleAuthR) # Google API Client Library for R
+library(ggplot2) # Graphing package 
+library(stringr) # Consistent Wrappers for Common String Operations
+library(lubridate) # Converts continuous dates into discrete years
+```
+
+You will also need positive-words.txt and negative-words.txt, which can be loaded with the following code.
+```{r}
+positive.words <- scan('positive-words.txt', what='character', comment.char=';') # 2,006 words that typically have positive sentiment on social media
+negative.words <- scan('negative-words.txt', what='character', comment.char=';') # 4,783 words that typically have negative sentiment on social media
+```
+
+Project ID required by Google BigQuery
+```{r}
+project <- "hacker-news-sentiment-analysis"
+```
+
+### Comments: Sampling
+
+Random sample of 2007 comments 
+```{r}
+sample.2007.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 1300000/8399417 AND time > 1167609600 AND time < 1199145600 ORDER BY time_ts" # SQL statement used to query
+sample.2007.comments <- query_exec(sample.2007.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2008 comments
+```{r}
+sample.2008.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 350000/8399417 AND time > 1199145600 AND time < 1230768000 ORDER BY time_ts" # SQL statement used to query
+sample.2008.comments <- query_exec(sample.2008.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2009 comments
+```{r}
+sample.2009.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 200000/8399417 AND time > 1230768000 AND time < 1262304000 ORDER BY time_ts" # SQL statement used to query
+sample.2009.comments <- query_exec(sample.2009.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2010 comments
+```{r}
+sample.2010.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 100000/8399417 AND time > 1262304000 AND time < 1293840000 ORDER BY time_ts" # SQL statement used to query
+sample.2010.comments <- query_exec(sample.2010.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2011 comments
+```{r}
+sample.2011.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 80000/8399417 AND time > 1293840000 AND time < 1325376000 ORDER BY time_ts" # SQL statement used to query
+sample.2011.comments <- query_exec(sample.2011.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2012 comments
+```{r}
+sample.2012.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 80000/8399417 AND time > 1325376000 AND time < 1356998400 ORDER BY time_ts" # SQL statement used to query
+sample.2012.comments <- query_exec(sample.2012.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2013 comments
+```{r}
+sample.2013.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 60000/8399417 AND time > 1356998400 AND time < 1388534400 ORDER BY time_ts" # SQL statement used to query
+sample.2013.comments <- query_exec(sample.2013.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2014 comments
+```{r}
+sample.2014.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 60000/8399417 AND time > 1388534400 AND time < 1420070400 ORDER BY time_ts" # SQL statement used to query
+sample.2014.comments <- query_exec(sample.2014.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Random sample of 2015 comments
+```{r}
+sample.2015.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE RAND() < 70000/8399417 AND time > 1420070400 ORDER BY time_ts" # SQL statement used to query
+sample.2015.comments <- query_exec(sample.2015.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Combining samples from each year into one data frame
+```{r}
+hackernews.comments <- rbind(sample.2007.comments, sample.2008.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2009.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2010.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2011.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2012.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2013.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2014.comments)
+hackernews.comments <- rbind(hackernews.comments, sample.2015.comments)
+```
+
+### Comments: Sentiment Analysis
+
+```{r}
+comments.scores = c() # vector used to store sentiment score for each comment
+
+# for loop used to iterate through every row in the comments data frame
+for (i in 1:nrow(hackernews.comments)) {
+
+  comment <- hackernews.comments[i, 3] # temp string used to store each comment
+  
+  comment = gsub('[[:punct:]]', ' ', comment) # removing punctiation characters
+  
+  comment = gsub('[[:cntrl:]]', '', comment) # removing control characters
+  
+  comment = gsub('[[:digit:]]+', '', comment) # removing digit characters
+  
+  comment = tolower(comment) # making all characters lower case
+  
+  word.list = str_split(comment, '\\s+') # splitting every comment into a list of words
+  
+  words = unlist(word.list) # making the list of words into a vector of words
+  
+  positive.matches = match(words, positive.words) # returns index of every word that matches a positive word
+  
+  negative.matches = match(words, negative.words) # returns index of every word that matches a negative word
+  
+  positive.matches = !is.na(positive.matches) # returns 1 if a word matches a positive word or returns 0 if a word does not match any positive words
+  
+  negative.matches = !is.na(negative.matches) # returns 1 if a word matches a negative word or returns 0 if a word does not match any negative words
+  
+  score = sum(positive.matches) - sum(negative.matches) # scores each comment using the simple algorithim described above
+ 
+  comments.scores[i] = score # adds score to vector of scores
+  
+}
+
+hackernews.comments["score"] <- comments.scores # adds vector of scores to column of data table
+```
+
+Adjusting from Unix seconds to years
+```{r}
+
+comments.times_adj = c()
+
+for (i in 1:nrow(hackernews.comments)) {
+  
+  time_adj <- hackernews.comments[i, 2]
+  comments.times_adj[i] = (time_adj / 31556926)
+
+}
+
+hackernews.comments["time_adj"] <- comments.times_adj
+```
+
+### Power Users: Retrieval
+
+All comments from user "cwan"
+```{r}
+cwan.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE [by] == 'cwan' ORDER BY time_ts" # SQL statement used to query
+cwan.comments <- query_exec(cwan.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+All comments from user "nickb"
+```{r}
+nickb.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE [by] == 'nickb' ORDER BY time_ts" # SQL statement used to query
+nickb.comments <- query_exec(nickb.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+All comments from user "fogus"
+```{r}
+fogus.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE [by] == 'fogus' ORDER BY time_ts" # SQL statement used to query
+fogus.comments <- query_exec(fogus.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+All comments from user "ColinWright"
+```{r}
+ColinWright.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE [by] == 'ColinWright' ORDER BY time_ts" # SQL statement used to query
+ColinWright.comments <- query_exec(ColinWright.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+All comments from user "shawndumas"
+```{r}
+shawndumas.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE [by] == 'shawndumas' ORDER BY time_ts" # SQL statement used to query
+shawndumas.comments <- query_exec(shawndumas.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Combining comments from the top five power users into one dataframe
+```{r}
+powerusers.comments <- rbind(cwan.comments, nickb.comments)
+powerusers.comments <- rbind(powerusers.comments, fogus.comments)
+powerusers.comments <- rbind(powerusers.comments, ColinWright.comments)
+powerusers.comments <- rbind(powerusers.comments, shawndumas.comments)
+```
+
+### Power Users: Sentiment Analysis
+
+```{r}
+morecomments.scores = c() # vector used to store sentiment score for each comment
+
+# for loop used to iterate through every row in the comments data frame
+for (i in 1:nrow(powerusers.comments)) {
+
+  comment <- powerusers.comments[i, 3] # temp string used to store each comment
+  
+  comment = gsub('[[:punct:]]', ' ', comment) # removing punctiation characters
+  
+  comment = gsub('[[:cntrl:]]', '', comment) # removing control characters
+  
+  comment = gsub('[[:digit:]]+', '', comment) # removing digit characters
+  
+  comment = tolower(comment) # making all characters lower case
+  
+  word.list = str_split(comment, '\\s+') # splitting every comment into a list of words
+  
+  words = unlist(word.list) # making the list of words into a vector of words
+  
+  positive.matches = match(words, positive.words) # returns index of every word that matches a positive word
+  
+  negative.matches = match(words, negative.words) # returns index of every word that matches a negative word
+  
+  positive.matches = !is.na(positive.matches) # returns 1 if a word matches a positive word or returns 0 if a word does not match any positive words
+  
+  negative.matches = !is.na(negative.matches) # returns 1 if a word matches a negative word or returns 0 if a word does not match any negative words
+  
+  score = sum(positive.matches) - sum(negative.matches) # scores each comment using the simple algorithim described above
+ 
+  morecomments.scores[i] = score # adds score to vector of scores
+  
+}
+
+powerusers.comments["score"] <- morecomments.scores # adds vector of scores to column of data table
+```
+
+Adjusting from Unix seconds to years
+```{r}
+
+morecomments.times_adj = c()
+
+for (i in 1:nrow(powerusers.comments)) {
+  
+  time_adj <- powerusers.comments[i, 2]
+  morecomments.times_adj[i] = (time_adj / 31556926)
+
+}
+
+powerusers.comments["time_adj"] <- morecomments.times_adj
+```
+
+### Stories: Retrieval
+
+All stories from TechCrunch
+```{r}
+techcrunch.stories.sql <- "SELECT url, time_ts, time, title, score, descendants FROM [bigquery-public-data:hacker_news.stories] WHERE REGEXP_MATCH(url, 'techcrunch.com') ORDER BY time_ts" # SQL statement used to query
+techcrunch.stories <- query_exec(techcrunch.stories.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Adding website name "techcrunch.com" to data frame
+```{r}
+story.website = c()
+
+for (i in 1:nrow(techcrunch.stories)) {
+  
+  story.website[i] = "techcrunch.com"
+
+}
+
+techcrunch.stories["website"] <- story.website
+```
+
+All stories from the New York Times
+```{r}
+nytimes.stories.sql <- "SELECT url, time_ts, time, title, score, descendants FROM [bigquery-public-data:hacker_news.stories] WHERE REGEXP_MATCH(url, 'nytimes.com') ORDER BY time_ts" # SQL statement used to query
+nytimes.stories <- query_exec(nytimes.stories.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Adding website name "nytimes.com" to data frame
+```{r}
+story.website = c()
+
+for (i in 1:nrow(nytimes.stories)) {
+  
+  story.website[i] = "nytimes.com"
+
+}
+
+nytimes.stories["website"] <- story.website
+```
+
+All stories form Blog Spot
+```{r}
+blogspot.stories.sql <- "SELECT url, time_ts, time, title, score, descendants FROM [bigquery-public-data:hacker_news.stories] WHERE REGEXP_MATCH(url, 'blogspot.com') ORDER BY time_ts" # SQL statement used to query
+blogspot.stories <- query_exec(blogspot.stories.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Adding website name "blogspot.com" to data frame
+```{r}
+story.website = c()
+
+for (i in 1:nrow(blogspot.stories)) {
+  
+  story.website[i] = "blogspot.com"
+
+}
+
+blogspot.stories["website"] <- story.website
+```
+
+All stories from Ars Techina
+```{r}
+arstechnica.stories.sql <- "SELECT url, time_ts, time, title, score, descendants FROM [bigquery-public-data:hacker_news.stories] WHERE REGEXP_MATCH(url, 'arstechnica.com') ORDER BY time_ts" # SQL statement used to query
+arstechnica.stories <- query_exec(arstechnica.stories.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Adding website name "arstechnica.com" to data frame
+```{r}
+story.website = c()
+
+for (i in 1:nrow(arstechnica.stories)) {
+  
+  story.website[i] = "arstechnica.com"
+
+}
+
+arstechnica.stories["website"] <- story.website
+```
+
+All stories from Wired
+```{r}
+wired.stories.sql <- "SELECT url, time_ts, time, title, score, descendants FROM [bigquery-public-data:hacker_news.stories] WHERE REGEXP_MATCH(url, 'wired.com') ORDER BY time_ts" # SQL statement used to query
+wired.stories <- query_exec(wired.stories.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Adding website name "wired.com" to data frame
+```{r}
+story.website = c()
+
+for (i in 1:nrow(wired.stories)) {
+  
+  story.website[i] = "wired.com"
+
+}
+
+wired.stories["website"] <- story.website
+```
+
+Combining all stories from the top five most linked websites into one data frame
+```{r}
+hackernews.stories <- rbind(techcrunch.stories, nytimes.stories)
+hackernews.stories <- rbind(hackernews.stories, blogspot.stories)
+hackernews.stories <- rbind(hackernews.stories, arstechnica.stories)
+hackernews.stories <- rbind(hackernews.stories, wired.stories)
+```
+
+Changing from continuous dates to discrete years
+```{r}
+time.year = c()
+
+for (i in 1:nrow(hackernews.stories)) {
+  
+  time_ts <- hackernews.stories[i, 2]
+  time.year[i] = year(time_ts)
+
+}
+
+hackernews.stories["year"] <- time.year
+```
+
+## A research question or hypothesis along with citations to selected background literature (no extensive literature review or discussion)
+
+### Hypothesis
+
+A common complaint on [Hacker News](https://news.ycombinator.com/) lately has been that it has become increasingly negative since it was launched ten years ago and that some users have decreased their engagement as a result. My goal with this project is to test the accuracy of this sentiment.
+
+### Citations
+
+Using an opinion lexicon dataset put together by [Dr. Bing Liu and Dr. Minqing Hu](http://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html) and simple sentiment analysis approach designed by [Jeffrey Breen](https://mran.revolutionanalytics.com/posts/twitter.html), I analyzed comments, stories, and power users from 2007 to 2015 to see if there is evidence that Hacker News is trending negative.
+
+Please see *Thank You* below for more information.
+
+## A succinct description of the relevant measures and how the data were collected
+
+### Approach
+
+Using bigrquery, I queried random samples of around 10,000 comments each year between 2007 and 2015 from the Hacker News dataset on Google BigQuery. In addition, I pulled all stories posted on Hacker News from the five most linked websites and all comments from the top five power users (users who posted the most stories that scored over 7).
+
+### Measures
+
+**Comments** are the life blood of Hacker News, so sentiment analysis of them could help us figure out if discussions are becoming more negative.
+
+**Power users** disproportionately represent a community, so a sentiment analysis of their comments individually could help us figure out why users believe Hacker News is becoming more negative.
+
+**Stories** recieve scores and are where comments live, so looking at their change over time could lead us to understand how community engagement has changed over time.
+
+### Data
+
+Comments
+* **time_ts**: Human readable time in UTC
+* **time**: Unix time
+* **time_adj**: Unix time adjusted from seconds to years
+* **text**: Comment text
+* **ranking**: Comment ranking
+* **score**: Sentiment analysis score
+* **by**: user name of commenter
+
+```{r}
+head(hackernews.comments)
+```
+
+Stories
+* **url**: Story url
+* **time_ts**: Human readable time in UTC
+* **time**: Unix time
+* **title**: Story title
+* **score**: Story score
+* **descendants**: Number of story comments
+* **website**: Story original website
+
+```{r}
+head(hackernews.stories)
+```
+
+## A prose statistical analysis plan
+
+**Comments**: The population size of all comments is around 8.3 million. However, due to processing power and finanical limitations, I needed to take samples of the data. Thus, I took a random sample using the SQL Rand() function of around 10,000 comments for each year. I checked the stastical reliability of the samples produced by my query by comparing its mean difference with that of the population. Using a simple, naive algorithim, I subtracted the number of occurrences of negative words from the number of occurrences of positive words to score each comment. I then conducted a linear regression to see if sentiment scores and/or comment rankings decreased over time.
+
+**Power Users**: After querying all comments from the top five users who posted the most stories that scored over 7, I repeated the sentiment analysis decsribed above for each of them. This was also followed by conducting a linear regression to see if any of their sentiment scores and/or comment rankings decreased over time.
+
+**Stories**: To understand changes in community engagement over time, I also queried every story from the top five most linked websites along with their story score and number of comments. Using linear regresion for each, I then compared the different websites by evaluating their story score and number of comments over time.
+
+## Descriptive statistics of the data
+
+### Comments
+
+Total Number of Data Points
+```{r}
+nrow(hackernews.comments)
+```
+
+Summary of Comments Data
+```{r}
+summary(hackernews.comments)
+```
+
+### Power Users
+
+Total Number of Data Points
+```{r}
+nrow(powerusers.comments)
+```
+
+Summary of Comments Data
+```{r}
+summary(powerusers.comments)
+```
+
+### Stories
+
+Total Number of Data Points
+```{r}
+nrow(hackernews.stories)
+```
+
+Summary of Comments Data
+```{r}
+summary(hackernews.stories)
+```
+
+## Exploratory visualizations (graphs)
+
+### Comments
+
+```{r}
+ggplot(hackernews.comments, aes(y=score, x=time_ts, col=ranking)) + geom_point()
+```
+
+### Power Users
+
+```{r}
+ggplot(powerusers.comments, aes(y=score, x=time_ts, col=by)) + geom_point()
+```
+
+### Stories
+
+```{r}
+ggplot(hackernews.stories, aes(y=descendants, x=score, col=website)) + facet_wrap(~year) + geom_point()
+```
+
+## Hypothesis-based statistical analysis of the effects of interests
+
+### Comments
+
+```{r}
+summary(hackernews.comments$score)
+
+lm.comments <- lm(score ~ time_adj, data=hackernews.comments)
+
+summary(lm.comments)
+```
+
+### Power Users
+
+```{r}
+summary(powerusers.comments$score)
+
+lm.powerusers.comments <- lm(score ~ time_adj, data=powerusers.comments)
+
+summary(lm.powerusers.comments)
+```
+
+### Stories
+
+```{r}
+lm.stories <- lm(descendants ~ score, data=hackernews.stories)
+
+summary(lm.stories)
+```
+
+## Visualization for the effects of interest
+
+### Comments
+
+Linear regression model added to exploratory visualization
+```{r}
+ggplot(hackernews.comments, aes(y=score, x=time_ts, col=ranking)) + geom_point() + geom_smooth(method='lm')
+```
+
+### Power Users
+
+Linear regression model added to exploratory visualization
+```{r}
+ggplot(powerusers.comments, aes(y=score, x=time_ts, col=by)) + geom_point() + geom_smooth(method='lm')
+```
+
+### Stories
+
+Linear regression model added to exploratory visualization
+```{r}
+ggplot(hackernews.stories, aes(y=descendants, x=score, col=website)) + facet_wrap(~year) + geom_point() + geom_smooth(method='lm')
+```
+
+## Simulation to check for statistical reliability or to evaluate the adequacy of the statistical tool used
+
+I checked the statisical reliability of the random samples produced by my query by comparing its mean difference with that of the population.
+
+Querying all 2007 comments
+```{r}
+population.2007.sql <- "SELECT time_ts, time, text, ranking, [by] FROM [bigquery-public-data:hacker_news.comments] WHERE time > 1167609600 AND time < 1199145600 ORDER BY time_ts" # SQL statement used to query
+population.2007.comments <- query_exec(population.2007.sql, project = project, max_pages = Inf) # executing sql statement and loading it into a data frame
+```
+
+Scoring all 2007 comments
+```{r}
+comments.scores = c() # vector used to store sentiment score for each comment
+
+# for loop used to iterate through every row in the comments data frame
+for (i in 1:nrow(population.2007.comments)) {
+
+  comment <- population.2007.comments[i, 3] # temp string used to store each comment
+  
+  comment = gsub('[[:punct:]]', ' ', comment) # removing punctiation characters
+  
+  comment = gsub('[[:cntrl:]]', '', comment) # removing control characters
+  
+  comment = gsub('[[:digit:]]+', '', comment) # removing digit characters
+  
+  comment = tolower(comment) # making all characters lower case
+  
+  word.list = str_split(comment, '\\s+') # splitting every comment into a list of words
+  
+  words = unlist(word.list) # making the list of words into a vector of words
+  
+  positive.matches = match(words, positive.words) # returns index of every word that matches a positive word
+  
+  negative.matches = match(words, negative.words) # returns index of every word that matches a negative word
+  
+  positive.matches = !is.na(positive.matches) # returns 1 if a word matches a positive word or returns 0 if a word does not match any positive words
+  
+  negative.matches = !is.na(negative.matches) # returns 1 if a word matches a negative word or returns 0 if a word does not match any negative words
+  
+  score = sum(positive.matches) - sum(negative.matches) # scores each comment using the simple algorithim described above
+ 
+  comments.scores[i] = score # adds score to vector of scores
+  
+}
+
+population.2007.comments["score"] <- comments.scores # adds vector of scores to column of data table
+```
+
+Comparing 2007 sample and population mean differences with t.test
+```{r}
+t.test(population.2007.comments$score, sample.2007.comments$score)
+```
+
+## Prose description of the primary statistical results
+
+### Comments
+
+According to my analysis, for every year since its inception, the sentiment has decreased an average of -0.043997 sentiment score units, which means there is 0.043997 more negative words than positive in comments each year on average. The p value is well below 0.05, which indicates that there is substantial evidence against the null hypothesis and for the effect of time on sentiment score being significant.
+
+### Power Users
+
+According to my analysis, for every year since its inception, the sentiment of power users has increased an average of 0.02904 sentiment score units, which means there is 0.02904 more positive words than negative in top five power users comments each year on average. The p value is less than 0.05 but not nearly as low as that of the comments. Nevertheless, there is evidence against the null hypothesis and for the effect of time on sentiment score for power users being significant. 
+
+### Stories
+
+According to my analysis, within all of the stories from the top five most linked websites, every increase in story score leads to a 0.4604447 more comments. The p value is well below 0.05, which indicates that there is substantial evidence against the null hypothesis and for the effect of story score on number of comments being significant.
+
+## Discussion of how the results bear on the research question
+
+If you look at the sentiment of all comments over time, you see that there is a very slight increase in the negative sentiment. However, if you look at the sentment of power users over time, you see that there is a very slight increase in positive sentiment. The mean sentiment score of power users is lower than that of the sample of all comments. Thus, there is evidence, though by no means is it conclusive evidence, that supports the hypothesis that Hacker News is becoming more negative.
+
+Nevertheless, from the analysis of stories, you can see that number of comments and story score amounts has grown each year, which means either more users are engaging or users are engaging more. This is counter to the second part of the hypothesis and could be used as evidence against the first part because why would there be more user engagement if sentiment is becoming more negative.
+
+The lack of initial clear evidence leads me to believe that these measured changes are likely too subtle for users to be able to accurately tell if sentiment has changed negatively from the small amount of comments each of them read. However, I believe further analysis using a better sentiment analyis classifier, more samples, and more stastical analysis is needed to truly reject or accept this hypothesis.
+
+## Thank You
+
+Special thanks to [Dr. Jonathan Brennan](https://sites.google.com/site/jonrbrennan/) for teaching Quantitative Methods in Lingustics (LING 492) at the University of Michigan during the Winter 2017 semester, which introduced me to R and how to use it.
+
+Special thanks to [Jeffrey Breen](https://mran.revolutionanalytics.com/posts/twitter.html) for inspiring me to do this project and whose code (Apache License, Version 2.0) has been adapted to prepare the dataset.
+
+Special thanks to [Dr. Bing Liu and Dr. Minqing Hu](http://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html) for putting together a list of ~6,800 positive and negative english opinion sentiment words and providing them online for others to use.
